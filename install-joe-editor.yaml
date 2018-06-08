@@ -1,0 +1,81 @@
+---
+# How to use/install:
+#
+# # Install
+# $ ansible-playbook install-joe-editor.yaml
+#
+# # Install on remote machine
+# $ ansible-playbook install-joe-editor.yaml -e install_on=REMOTE-MACHINE
+#
+####### </ Jeffery Bagirimvano >
+
+- name: Install joe editor from source
+  hosts: "{{ install_on | default('localhost') }}"
+  vars:
+    joe_version: 4.6
+    joe_tarball_url: "https://sourceforge.net/projects/joe-editor/files/JOE%20sources/joe-{{ joe_version }}/joe-{{ joe_version }}.tar.gz/download"
+    joe_install_dir: "/tmp/joe-{{ joe_version }}"
+    joe_configure_prefix: "{{ ansible_user_dir }}/.local"
+    joe_bin_path: "{{ joe_configure_prefix }}/bin"
+
+  tasks:
+  - name: Downloading joe editor sources
+    get_url:
+      url: "{{ joe_tarball_url }}"
+      dest: "/tmp/joe-{{ joe_version }}.tar.gz"
+    register: joe_source
+
+  - name: Installing joe Dependencies
+    become: yes
+    package:
+      name: "{{ item }}"
+    with_items:
+      - xterm
+
+  - name: Unpacking joe
+    unarchive:
+      copy: no
+      dest: /tmp/
+      src: "{{ joe_source.dest }}"
+    when: joe_source.changed
+    register: joe_source_unpack
+
+  - name: Create required folder
+    file:
+      path: "{{ joe_configure_prefix }}"
+      state: directory
+
+  - name: Configuring joe source
+    command: "./configure --prefix={{ joe_configure_prefix }} --enable-256-color --enable-paste64"
+    args:
+      chdir: "{{ joe_install_dir }}"
+    when: joe_source_unpack is changed
+    register: joe_configure
+
+  - name: Installing joe editor
+    shell: make && make install
+    args:
+      chdir: "{{ joe_install_dir }}"
+    when: joe_configure is changed
+
+  - name: Delete or update user custom configuration
+    file:
+      path: "{{ ansible_user_dir }}/.{{ item }}"
+      state: absent
+    with_items:
+      - joerc
+      - jmacsrc
+      - rjoerc
+      - jstarrc
+      - jpicorc
+      - joe
+
+  - name: "Ensure {{ joe_bin_path }} is in the PATH in .bashrc"
+    lineinfile: >
+      dest="{{ ansible_env.HOME }}/.bash_profile"
+      state=present
+      backrefs=yes
+      regexp='PATH=(["]*)((?!.*?{{joe_bin_path}}).*?)(["]*)$'
+      line="PATH=\1\2:{{joe_bin_path}}\3"
+      backup=yes
+
