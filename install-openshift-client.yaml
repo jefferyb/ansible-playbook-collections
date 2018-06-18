@@ -59,6 +59,7 @@
           copy:
             src: "{{ tmp_location }}/openshift-origin-client-tools-{{ oc_version }}-{{ oc_commit }}-{{ oc_platform }}/oc"
             dest: "{{ oc_install_location }}"
+            mode: u=rwx,g=rx,o=rx
             remote_src: yes
           become: yes
 
@@ -78,11 +79,12 @@
           get_url:
             url: "https://raw.githubusercontent.com/openshift/origin/master/contrib/completions/bash/oc"
             dest: "/etc/bash_completion.d/oc"
+            mode: u=rw,g=r,o=r
           become: yes
 
         - name: Install kompose
           shell: |
-            KOMPOSE_VERSION="$(curl -s https://api.github.com/repos/kubernetes/kompose/releases/latest | jq -r ".tag_name")"
+            KOMPOSE_VERSION="$(curl -s https://api.github.com/repos/kubernetes/kompose/releases/latest | grep tag_name | sed 's/[\",]//g' | awk '{print $2}')"
             echo "curl -L https://github.com/kubernetes-incubator/kompose/releases/download/${KOMPOSE_VERSION}/kompose-linux-amd64 -o /usr/local/bin/kompose" | sudo bash
             chmod +x /usr/local/bin/kompose
           args:
