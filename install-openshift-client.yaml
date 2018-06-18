@@ -1,0 +1,105 @@
+---
+# How to use/install:
+#
+# # Install
+# $ ansible-playbook install-openshift-client.yaml
+#
+# # Install on remote machine
+# $ ansible-playbook install-openshift-client.yaml -e install_on=REMOTE-MACHINE
+#
+####### </ Jeffery Bagirimvano >
+
+- hosts: "{{ install_on | default ('localhost') }}"
+  vars:
+    oc_version: v3.9.0
+    oc_commit: 191fece
+  tasks:
+    - name: set some vars for Linux
+      set_fact: oc_platform="linux-64bit" oc_download_format="tar.gz" oc_install_location="/usr/local/bin/oc" tmp_location="/tmp"
+      when: ansible_system == "Linux"
+    - name: set some vars for Darwin
+      set_fact: oc_platform="mac" oc_download_format="zip" oc_install_location="/usr/local/bin/oc" tmp_location="/tmp"
+      when: ansible_system == "Darwin"
+    - name: set some vars for Windows
+      set_fact: oc_platform="windows" oc_download_format="zip"
+      when: ansible_system == "Win32NT"
+
+    - name: check for install
+      stat:
+        path: "{{ oc_install_location }}"
+      changed_when: false
+      register: oc_binary_present
+
+    - name: check installed version
+      shell: |
+        {{ oc_install_location }} version | head -n 1 | awk '{print $2}'
+      changed_when: false
+      register: oc_binary_version
+      when: oc_binary_present.stat.exists
+    - debug:
+        var: oc_binary_present.stat.exists
+    - debug:
+        var: oc_binary_version.stdout
+
+    - when: (not oc_binary_present.stat.exists) or (oc_binary_version.stdout != oc_version+oc_commit)
+      block:
+        - name: download openshift-origin-client-tools
+          get_url:
+            url: "https://github.com/openshift/origin/releases/download/{{ oc_version }}/openshift-origin-client-tools-{{ oc_version }}-{{ oc_commit }}-{{ oc_platform }}.{{ oc_download_format }}"
+            dest: "{{ tmp_location }}/openshift-origin-client-tools-{{ oc_platform }}.{{ oc_download_format }}"
+
+        - name: unarchive openshift-origin-client-tools
+          unarchive:
+            remote_src: yes
+            src: "{{ tmp_location }}/openshift-origin-client-tools-{{ oc_platform }}.{{ oc_download_format }}"
+            dest: "{{ tmp_location }}"
+            creates: "{{ tmp_location }}/openshift-origin-client-tools-{{ oc_version }}-{{ oc_commit }}-{{ oc_platform }}/oc"
+
+        - name: Copy oc to /usr/local/bin/
+          copy:
+            src: "{{ tmp_location }}/openshift-origin-client-tools-{{ oc_version }}-{{ oc_commit }}-{{ oc_platform }}/oc"
+            dest: "{{ oc_install_location }}"
+            remote_src: yes
+          become: yes
+
+        - name: cleanup
+          file:
+            path: "{{ tmp_location }}/{{ item }}"
+            state: absent
+          with_items:
+            - "{{ tmp_location }}/openshift-origin-client-tools-{{ oc_version }}-{{ oc_commit }}-{{ oc_platform }}"
+            - "{{ tmp_location }}/openshift-origin-client-tools-{{ oc_platform }}.{{ oc_download_format }}"
+
+        - name: Install bash-completion
+          package: name=bash-completion state=present
+          become: yes
+
+        - name: Installing oc bash-completion
+          get_url:
+            url: "https://raw.githubusercontent.com/openshift/origin/master/contrib/completions/bash/oc"
+            dest: "/etc/bash_completion.d/oc"
+          become: yes
+
+        - name: Install kompose
+          shell: |
+            KOMPOSE_VERSION="$(curl -s https://api.github.com/repos/kubernetes/kompose/releases/latest | jq -r ".tag_name")"
+            echo "curl -L https://github.com/kubernetes-incubator/kompose/releases/download/${KOMPOSE_VERSION}/kompose-linux-amd64 -o /usr/local/bin/kompose" | sudo bash
+            chmod +x /usr/local/bin/kompose
+          args:
+            creates: /usr/local/bin/kompose
+            executable: /bin/bash
+          become: yes
+
+        - name: enable oc shell completion
+          lineinfile:
+            path: "{{ ansible_user_dir }}/.bashrc"
+            regexp: "^source(.*?)oc completion bash"
+            line: "source <(oc completion bash)"
+          tags: completion
+
+        - name: enable kompose shell completion
+          lineinfile:
+            path: "{{ ansible_user_dir }}/.bashrc"
+            regexp: "^source(.*?)kompose completion bash"
+            line: "source <(kompose completion bash)"
+
